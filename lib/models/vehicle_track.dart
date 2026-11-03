@@ -16,6 +16,12 @@ class VehicleTrack {
   int missedFrames;
   bool counted;
 
+  /// Number of detections associated with this track so far.
+  ///
+  /// Line crossings are only accepted once a track has been confirmed, which
+  /// filters single-frame detector noise without dropping real vehicles.
+  int hits;
+
   /// Frame stamp of the last detection associated with this track.
   ///
   /// The tracker compares this against its current frame counter instead of
@@ -45,7 +51,8 @@ class VehicleTrack {
     this.lastMatchedFrame = -1,
   })  : previousPosition = null,
         missedFrames = 0,
-        counted = false {
+        counted = false,
+        hits = 1 {
     _pushHistory(position.dx, position.dy);
   }
 
@@ -95,6 +102,7 @@ class VehicleTrack {
     position = Offset(x, y);
     this.confidence = confidence;
     missedFrames = 0;
+    hits++;
 
     _pushHistory(x, y);
   }

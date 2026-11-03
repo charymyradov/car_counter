@@ -23,12 +23,22 @@ class CounterConfig {
   /// Max normalized Euclidean distance for linking detections across frames.
   final double maxMatchDistance;
 
+  /// Detections a track needs before its line crossings are accepted.
+  final int minHits;
+
+  /// Upper bound on simultaneously tracked vehicles.
+  ///
+  /// Protects the tracking loop from runaway track creation on noisy frames.
+  final int maxTracks;
+
   const CounterConfig({
     this.linePosition = 0.55,
     this.isHorizontal = false,
     this.minConfidence = 0.35,
     this.maxMissedFrames = 10,
     this.maxMatchDistance = 0.20,
+    this.minHits = 2,
+    this.maxTracks = 64,
   });
 
   CounterConfig copyWith({
@@ -37,6 +47,8 @@ class CounterConfig {
     double? minConfidence,
     int? maxMissedFrames,
     double? maxMatchDistance,
+    int? minHits,
+    int? maxTracks,
   }) {
     return CounterConfig(
       linePosition: linePosition ?? this.linePosition,
@@ -44,6 +56,8 @@ class CounterConfig {
       minConfidence: minConfidence ?? this.minConfidence,
       maxMissedFrames: maxMissedFrames ?? this.maxMissedFrames,
       maxMatchDistance: maxMatchDistance ?? this.maxMatchDistance,
+      minHits: minHits ?? this.minHits,
+      maxTracks: maxTracks ?? this.maxTracks,
     );
   }
 }
@@ -132,8 +146,10 @@ class VehicleTracker {
       }
 
       if (bestTrack != null) {
-        // Line-crossing verification
+        // Line-crossing verification. The current detection will become a
+        // confirmed hit, so crossings are accepted from the `minHits`-th hit.
         if (!bestTrack.counted &&
+            bestTrack.hits + 1 >= config.minHits &&
             _checkLineCrossing(
               previousX: bestTrack.position.dx,
               previousY: bestTrack.position.dy,
@@ -155,7 +171,9 @@ class VehicleTracker {
         bestTrack.updatePosition(centerX, centerY, confidence);
         bestTrack.lastMatchedFrame = _frameStamp;
       } else {
-        // Create new track
+        // Create new track, but keep the tracking loop bounded.
+        if (_activeTracks.length >= config.maxTracks) continue;
+
         final newTrack = VehicleTrack(
           id: _nextTrackId++,
           type: type,
