@@ -60,11 +60,41 @@ class CounterConfig {
       maxTracks: maxTracks ?? this.maxTracks,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is CounterConfig &&
+            other.linePosition == linePosition &&
+            other.isHorizontal == isHorizontal &&
+            other.minConfidence == minConfidence &&
+            other.maxMissedFrames == maxMissedFrames &&
+            other.maxMatchDistance == maxMatchDistance &&
+            other.minHits == minHits &&
+            other.maxTracks == maxTracks;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        linePosition,
+        isHorizontal,
+        minConfidence,
+        maxMissedFrames,
+        maxMatchDistance,
+        minHits,
+        maxTracks,
+      );
 }
 
 /// High-performance vehicle tracking and line-crossing counting engine.
 class VehicleTracker {
-  CounterConfig config;
+  CounterConfig _config;
+
+  /// Current tracking configuration. Updates through [updateConfig] notify
+  /// [configNotifier] so overlays can repaint without rebuilding the page.
+  CounterConfig get config => _config;
+
+  final ValueNotifier<CounterConfig> configNotifier;
 
   final ValueNotifier<CounterStats> statsNotifier =
       ValueNotifier<CounterStats>(const CounterStats());
@@ -88,17 +118,22 @@ class VehicleTracker {
   final List<double> _detectionConfidence = <double>[];
 
   VehicleTracker({CounterConfig? initialConfig})
-      : config = initialConfig ?? const CounterConfig() {
+      : _config = initialConfig ?? const CounterConfig(),
+        configNotifier = ValueNotifier<CounterConfig>(
+          initialConfig ?? const CounterConfig(),
+        ) {
     _updateDistanceThreshold();
   }
 
   void _updateDistanceThreshold() {
-    _maxMatchDistSq = config.maxMatchDistance * config.maxMatchDistance;
+    _maxMatchDistSq = _config.maxMatchDistance * _config.maxMatchDistance;
   }
 
   void updateConfig(CounterConfig newConfig) {
-    config = newConfig;
+    if (newConfig == _config) return;
+    _config = newConfig;
     _updateDistanceThreshold();
+    configNotifier.value = newConfig;
   }
 
   List<VehicleTrack> get activeTracks => List.unmodifiable(_activeTracks);
@@ -266,6 +301,7 @@ class VehicleTracker {
   }
 
   void dispose() {
+    configNotifier.dispose();
     statsNotifier.dispose();
     activeVehiclesNotifier.dispose();
   }

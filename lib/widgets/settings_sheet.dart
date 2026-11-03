@@ -4,27 +4,21 @@ import '../services/vehicle_tracker.dart';
 /// Modal bottom sheet allowing real-time adjustment of detection & counting parameters.
 class SettingsSheet extends StatefulWidget {
   final VehicleTracker tracker;
-  final ValueChanged<CounterConfig> onConfigChanged;
 
   const SettingsSheet({
     super.key,
     required this.tracker,
-    required this.onConfigChanged,
   });
 
   static Future<void> show(
     BuildContext context, {
     required VehicleTracker tracker,
-    required ValueChanged<CounterConfig> onConfigChanged,
   }) {
     return showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (_) => SettingsSheet(
-        tracker: tracker,
-        onConfigChanged: onConfigChanged,
-      ),
+      builder: (_) => SettingsSheet(tracker: tracker),
     );
   }
 
@@ -46,12 +40,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
   }
 
   void _notifyChange() {
-    final updated = widget.tracker.config.copyWith(
-      linePosition: _linePosition,
-      isHorizontal: _isHorizontal,
-      minConfidence: _confidence,
+    widget.tracker.updateConfig(
+      widget.tracker.config.copyWith(
+        linePosition: _linePosition,
+        isHorizontal: _isHorizontal,
+        minConfidence: _confidence,
+      ),
     );
-    widget.onConfigChanged(updated);
   }
 
   @override

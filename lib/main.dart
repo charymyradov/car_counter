@@ -53,17 +53,11 @@ class _CarCounterPageState extends State<CarCounterPage>
   bool _cameraGranted = false;
   bool _checkingPermission = true;
 
-  // Cached config values for fast painter rebuilding
-  late double _linePosition;
-  late bool _isHorizontal;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tracker = VehicleTracker();
-    _linePosition = _tracker.config.linePosition;
-    _isHorizontal = _tracker.config.isHorizontal;
     _requestCameraPermission();
   }
 
@@ -98,20 +92,8 @@ class _CarCounterPageState extends State<CarCounterPage>
     _tracker.processFrame(results);
   }
 
-  void _onConfigChanged(CounterConfig newConfig) {
-    setState(() {
-      _tracker.updateConfig(newConfig);
-      _linePosition = newConfig.linePosition;
-      _isHorizontal = newConfig.isHorizontal;
-    });
-  }
-
   void _openSettings() {
-    SettingsSheet.show(
-      context,
-      tracker: _tracker,
-      onConfigChanged: _onConfigChanged,
-    );
+    SettingsSheet.show(context, tracker: _tracker);
   }
 
   @override
@@ -208,12 +190,21 @@ class _CarCounterPageState extends State<CarCounterPage>
           onResult: _onDetectionsReceived,
         ),
 
-        // 2. Optimized Counting Boundary Line
+        // 2. Optimized Counting Boundary Line. The overlay listens to the
+        //    tracker config directly, so dragging the settings slider repaints
+        //    only this layer instead of rebuilding the whole page.
         IgnorePointer(
-          child: CustomPaint(
-            painter: CountingLinePainter(
-              linePosition: _linePosition,
-              isHorizontal: _isHorizontal,
+          child: RepaintBoundary(
+            child: ValueListenableBuilder<CounterConfig>(
+              valueListenable: _tracker.configNotifier,
+              builder: (context, config, _) {
+                return CustomPaint(
+                  painter: CountingLinePainter(
+                    linePosition: config.linePosition,
+                    isHorizontal: config.isHorizontal,
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -235,7 +226,6 @@ class _CarCounterPageState extends State<CarCounterPage>
           left: 16,
           right: 16,
           child: HudBottomControls(
-            tracker: _tracker,
             onReset: _tracker.reset,
             onToggleSettings: _openSettings,
           ),

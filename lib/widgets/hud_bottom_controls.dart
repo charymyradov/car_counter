@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
-import '../services/vehicle_tracker.dart';
 
 /// Bottom control deck with reset button and configuration adjustments.
 class HudBottomControls extends StatelessWidget {
-  final VehicleTracker tracker;
   final VoidCallback onReset;
   final VoidCallback onToggleSettings;
 
   const HudBottomControls({
     super.key,
-    required this.tracker,
     required this.onReset,
     required this.onToggleSettings,
   });
