@@ -60,8 +60,18 @@ class VehicleTracker {
   int _nextTrackId = 0;
   final List<VehicleTrack> _activeTracks = [];
 
+  /// Monotonic frame counter used for O(1) match bookkeeping.
+  int _frameStamp = 0;
+
   // Squared distance threshold cache to avoid square-root computation
   late double _maxMatchDistSq;
+
+  // Reusable detection buffers. Scanning these parallel lists avoids building
+  // a fresh list of records for every camera frame.
+  final List<VehicleType> _detectionTypes = <VehicleType>[];
+  final List<double> _detectionX = <double>[];
+  final List<double> _detectionY = <double>[];
+  final List<double> _detectionConfidence = <double>[];
 
   VehicleTracker({CounterConfig? initialConfig})
       : config = initialConfig ?? const CounterConfig() {
@@ -81,52 +91,38 @@ class VehicleTracker {
 
   /// Process incoming detections from YOLO frame callback.
   void processFrame(List<YOLOResult> results) {
-    if (results.isEmpty && _activeTracks.isEmpty) return;
+    _frameStamp++;
 
-    // 1. Filter relevant vehicle detections
-    final List<({VehicleType type, Offset center, double confidence})> detections = [];
+    final hasDetections = _collectDetections(results);
+    if (!hasDetections && _activeTracks.isEmpty) return;
 
-    for (int i = 0; i < results.length; i++) {
-      final res = results[i];
-      if (res.confidence < config.minConfidence) continue;
-
-      final type = VehicleType.fromClassName(res.className);
-      if (type == null) continue;
-
-      final center = Offset(
-        res.normalizedBox.center.dx,
-        res.normalizedBox.center.dy,
-      );
-
-      detections.add((
-        type: type,
-        center: center,
-        confidence: res.confidence,
-      ));
-    }
+    var currentStats = statsNotifier.value;
+    var statsChanged = false;
 
     // 2. Associate detections with existing tracks using greedy nearest-neighbor
-    final matchedTrackIds = <int>{};
-    var currentStats = statsNotifier.value;
-    bool statsChanged = false;
+    final detectionCount = _detectionTypes.length;
 
-    for (int i = 0; i < detections.length; i++) {
-      final det = detections[i];
+    for (var i = 0; i < detectionCount; i++) {
+      final type = _detectionTypes[i];
+      final centerX = _detectionX[i];
+      final centerY = _detectionY[i];
+      final confidence = _detectionConfidence[i];
+
       VehicleTrack? bestTrack;
       double bestDistSq = _maxMatchDistSq;
 
-      for (int t = 0; t < _activeTracks.length; t++) {
+      for (var t = 0; t < _activeTracks.length; t++) {
         final track = _activeTracks[t];
-        if (matchedTrackIds.contains(track.id)) continue;
+        if (track.lastMatchedFrame == _frameStamp) continue;
 
         // Use predicted position for better fast-moving vehicle association
         final predicted = track.predictedPosition;
-        final dx = predicted.dx - det.center.dx;
-        final dy = predicted.dy - det.center.dy;
+        final dx = predicted.dx - centerX;
+        final dy = predicted.dy - centerY;
         double distSq = dx * dx + dy * dy;
 
         // Slight distance penalty if types do not match
-        if (track.type != det.type) {
+        if (track.type != type) {
           distSq *= 1.3;
         }
 
@@ -138,50 +134,54 @@ class VehicleTracker {
 
       if (bestTrack != null) {
         // Line-crossing verification
-        if (!bestTrack.counted) {
-          final crossed = _checkLineCrossing(
-            previous: bestTrack.position,
-            current: det.center,
+        if (!bestTrack.counted &&
+            _checkLineCrossing(
+              previousX: bestTrack.position.dx,
+              previousY: bestTrack.position.dy,
+              currentX: centerX,
+              currentY: centerY,
+            )) {
+          bestTrack.counted = true;
+          final isInbound = config.isHorizontal
+              ? (centerY >= bestTrack.position.dy)
+              : (centerX >= bestTrack.position.dx);
+
+          currentStats = currentStats.copyWithIncrement(
+            bestTrack.type,
+            isInbound: isInbound,
           );
-
-          if (crossed) {
-            bestTrack.counted = true;
-            final isInbound = config.isHorizontal
-                ? (det.center.dy >= bestTrack.position.dy)
-                : (det.center.dx >= bestTrack.position.dx);
-
-            currentStats = currentStats.copyWithIncrement(
-              bestTrack.type,
-              isInbound: isInbound,
-            );
-            statsChanged = true;
-          }
+          statsChanged = true;
         }
 
-        bestTrack.update(det.center, det.confidence);
-        matchedTrackIds.add(bestTrack.id);
+        bestTrack.updatePosition(centerX, centerY, confidence);
+        bestTrack.lastMatchedFrame = _frameStamp;
       } else {
         // Create new track
         final newTrack = VehicleTrack(
           id: _nextTrackId++,
-          type: det.type,
-          position: det.center,
-          confidence: det.confidence,
+          type: type,
+          position: Offset(centerX, centerY),
+          confidence: confidence,
+          lastMatchedFrame: _frameStamp,
         );
         _activeTracks.add(newTrack);
-        matchedTrackIds.add(newTrack.id);
       }
     }
 
-    // 3. Mark missed frames and purge lost tracks
-    for (int t = 0; t < _activeTracks.length; t++) {
-      final track = _activeTracks[t];
-      if (!matchedTrackIds.contains(track.id)) {
+    // 3. Mark missed frames and compact lost tracks in place. This replaces
+    //    `removeWhere` + closure allocation on every frame.
+    var writeIndex = 0;
+    for (var readIndex = 0; readIndex < _activeTracks.length; readIndex++) {
+      final track = _activeTracks[readIndex];
+      if (track.lastMatchedFrame != _frameStamp) {
         track.missedFrames++;
+        if (track.missedFrames > config.maxMissedFrames) continue;
       }
+      _activeTracks[writeIndex++] = track;
     }
-
-    _activeTracks.removeWhere((track) => track.missedFrames > config.maxMissedFrames);
+    if (writeIndex != _activeTracks.length) {
+      _activeTracks.length = writeIndex;
+    }
 
     // Update listeners only when necessary to preserve 60fps UI smoothness
     if (statsChanged) {
@@ -193,24 +193,56 @@ class VehicleTracker {
     }
   }
 
+  /// Filters YOLO results into the reusable detection buffers.
+  bool _collectDetections(List<YOLOResult> results) {
+    _detectionTypes.clear();
+    _detectionX.clear();
+    _detectionY.clear();
+    _detectionConfidence.clear();
+
+    final minConfidence = config.minConfidence;
+    for (var i = 0; i < results.length; i++) {
+      final result = results[i];
+      if (result.confidence < minConfidence) continue;
+
+      final type = VehicleType.fromClassName(result.className);
+      if (type == null) continue;
+
+      _detectionTypes.add(type);
+      _detectionX.add(result.normalizedBox.center.dx);
+      _detectionY.add(result.normalizedBox.center.dy);
+      _detectionConfidence.add(result.confidence);
+    }
+
+    return _detectionTypes.isNotEmpty;
+  }
+
   /// Evaluates whether the motion segment crossed the defined counting line.
-  bool _checkLineCrossing({required Offset previous, required Offset current}) {
+  bool _checkLineCrossing({
+    required double previousX,
+    required double previousY,
+    required double currentX,
+    required double currentY,
+  }) {
     final line = config.linePosition;
 
     if (config.isHorizontal) {
       // Horizontal line: vehicle crosses vertically across screen (Y axis)
-      return (previous.dy < line && current.dy >= line) ||
-          (previous.dy > line && current.dy <= line);
-    } else {
-      // Vertical line: vehicle crosses horizontally across screen (X axis)
-      return (previous.dx < line && current.dx >= line) ||
-          (previous.dx > line && current.dx <= line);
+      return (previousY < line && currentY >= line) ||
+          (previousY > line && currentY <= line);
     }
+    // Vertical line: vehicle crosses horizontally across screen (X axis)
+    return (previousX < line && currentX >= line) ||
+        (previousX > line && currentX <= line);
   }
 
   /// Resets all counters and tracks.
   void reset() {
     _activeTracks.clear();
+    _detectionTypes.clear();
+    _detectionX.clear();
+    _detectionY.clear();
+    _detectionConfidence.clear();
     _nextTrackId = 0;
     statsNotifier.value = const CounterStats();
     activeVehiclesNotifier.value = 0;

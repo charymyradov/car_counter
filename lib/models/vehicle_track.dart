@@ -15,11 +15,19 @@ class VehicleTrack {
   final DateTime createdAt;
   DateTime updatedAt;
 
+  /// Frame stamp of the last detection associated with this track.
+  ///
+  /// The tracker compares this against its current frame counter instead of
+  /// maintaining a per-frame `Set<int>` of matched track ids, which removes an
+  /// allocation (and hash lookups) from every processed frame.
+  int lastMatchedFrame;
+
   VehicleTrack({
     required this.id,
     required this.type,
     required this.position,
     this.confidence = 1.0,
+    this.lastMatchedFrame = -1,
   })  : previousPosition = null,
         velocity = Offset.zero,
         missedFrames = 0,
@@ -30,19 +38,25 @@ class VehicleTrack {
 
   /// Updates the track with a newly matched detection.
   void update(Offset newPosition, double newConfidence) {
+    updatePosition(newPosition.dx, newPosition.dy, newConfidence);
+  }
+
+  /// Updates the track from raw normalized coordinates.
+  ///
+  /// Avoids creating a temporary [Offset] for every matched detection.
+  void updatePosition(double x, double y, double confidence) {
     previousPosition = position;
-    // Exponential smoothing for velocity vector
-    final instantVelocity = newPosition - position;
+    // Exponential smoothing for the velocity vector
     velocity = Offset(
-      velocity.dx * 0.4 + instantVelocity.dx * 0.6,
-      velocity.dy * 0.4 + instantVelocity.dy * 0.6,
+      velocity.dx * 0.4 + (x - position.dx) * 0.6,
+      velocity.dy * 0.4 + (y - position.dy) * 0.6,
     );
-    position = newPosition;
-    confidence = newConfidence;
+    position = Offset(x, y);
+    this.confidence = confidence;
     missedFrames = 0;
     updatedAt = DateTime.now();
 
-    history.add(newPosition);
+    history.add(position);
     if (history.length > 8) {
       history.removeAt(0);
     }
@@ -58,4 +72,3 @@ class VehicleTrack {
     return dx * dx + dy * dy;
   }
 }
-
