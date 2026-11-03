@@ -116,9 +116,8 @@ class VehicleTracker {
         if (track.lastMatchedFrame == _frameStamp) continue;
 
         // Use predicted position for better fast-moving vehicle association
-        final predicted = track.predictedPosition;
-        final dx = predicted.dx - centerX;
-        final dy = predicted.dy - centerY;
+        final dx = track.predictedX - centerX;
+        final dy = track.predictedY - centerY;
         double distSq = dx * dx + dy * dy;
 
         // Slight distance penalty if types do not match

@@ -1,19 +1,20 @@
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import 'dart:ui' show Offset;
+
 import 'vehicle_type.dart';
 
 /// Represents an actively tracked vehicle across consecutive camera frames.
 class VehicleTrack {
+  /// Number of recent positions kept for trajectory visualisation.
+  static const int historyCapacity = 8;
+
   final int id;
   final VehicleType type;
   Offset position;
   Offset? previousPosition;
-  Offset velocity;
   double confidence;
   int missedFrames;
   bool counted;
-  final List<Offset> history;
-  final DateTime createdAt;
-  DateTime updatedAt;
 
   /// Frame stamp of the last detection associated with this track.
   ///
@@ -22,6 +23,20 @@ class VehicleTrack {
   /// allocation (and hash lookups) from every processed frame.
   int lastMatchedFrame;
 
+  // Smoothing coefficients for the velocity vector.
+  static const double _velocityRetain = 0.4;
+  static const double _velocityGain = 0.6;
+
+  double _velocityX = 0;
+  double _velocityY = 0;
+
+  // Fixed-size ring buffer for the recent trajectory. A `removeAt(0)` based
+  // list shifts every element on each update, so the ring buffer keeps history
+  // updates O(1) and allocation free.
+  final Float32List _historyXY = Float32List(historyCapacity * 2);
+  int _historyStart = 0;
+  int _historyLength = 0;
+
   VehicleTrack({
     required this.id,
     required this.type,
@@ -29,12 +44,37 @@ class VehicleTrack {
     this.confidence = 1.0,
     this.lastMatchedFrame = -1,
   })  : previousPosition = null,
-        velocity = Offset.zero,
         missedFrames = 0,
-        counted = false,
-        history = [position],
-        createdAt = DateTime.now(),
-        updatedAt = DateTime.now();
+        counted = false {
+    _pushHistory(position.dx, position.dy);
+  }
+
+  /// Smoothed velocity vector in normalized units per frame.
+  Offset get velocity => Offset(_velocityX, _velocityY);
+
+  /// Predicted X position in the next frame based on smoothed velocity.
+  double get predictedX => position.dx + _velocityX;
+
+  /// Predicted Y position in the next frame based on smoothed velocity.
+  double get predictedY => position.dy + _velocityY;
+
+  /// Predicted position in the next frame based on smoothed velocity.
+  Offset get predictedPosition => Offset(predictedX, predictedY);
+
+  /// Recent positions from oldest to newest.
+  ///
+  /// Materialised on demand; the tracking loop never reads it.
+  List<Offset> get history {
+    final positions = List<Offset>.filled(_historyLength, Offset.zero);
+    for (var i = 0; i < _historyLength; i++) {
+      final index = (_historyStart + i) % historyCapacity;
+      positions[i] = Offset(
+        _historyXY[index * 2],
+        _historyXY[index * 2 + 1],
+      );
+    }
+    return positions;
+  }
 
   /// Updates the track with a newly matched detection.
   void update(Offset newPosition, double newConfidence) {
@@ -46,24 +86,33 @@ class VehicleTrack {
   /// Avoids creating a temporary [Offset] for every matched detection.
   void updatePosition(double x, double y, double confidence) {
     previousPosition = position;
-    // Exponential smoothing for the velocity vector
-    velocity = Offset(
-      velocity.dx * 0.4 + (x - position.dx) * 0.6,
-      velocity.dy * 0.4 + (y - position.dy) * 0.6,
-    );
+
+    // Exponential smoothing for the velocity vector, computed on scalar fields
+    // so no intermediate Offset is allocated.
+    _velocityX = _velocityX * _velocityRetain + (x - position.dx) * _velocityGain;
+    _velocityY = _velocityY * _velocityRetain + (y - position.dy) * _velocityGain;
+
     position = Offset(x, y);
     this.confidence = confidence;
     missedFrames = 0;
-    updatedAt = DateTime.now();
 
-    history.add(position);
-    if (history.length > 8) {
-      history.removeAt(0);
-    }
+    _pushHistory(x, y);
   }
 
-  /// Predicted position in the next frame based on smoothed velocity.
-  Offset get predictedPosition => position + velocity;
+  void _pushHistory(double x, double y) {
+    if (_historyLength < historyCapacity) {
+      final index = (_historyStart + _historyLength) % historyCapacity;
+      _historyXY[index * 2] = x;
+      _historyXY[index * 2 + 1] = y;
+      _historyLength++;
+      return;
+    }
+
+    // Buffer is full: overwrite the oldest entry and advance the read cursor.
+    _historyXY[_historyStart * 2] = x;
+    _historyXY[_historyStart * 2 + 1] = y;
+    _historyStart = (_historyStart + 1) % historyCapacity;
+  }
 
   /// Calculates squared euclidean distance to a candidate point for fast association.
   double distanceSquaredTo(Offset target) {
