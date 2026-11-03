@@ -14,8 +14,34 @@ enum VehicleType {
   const VehicleType(this.label, this.icon, this.color);
 
   /// Resolves the vehicle type from YOLO COCO class label.
+  ///
+  /// YOLO labels are lowercase, so the common path is a plain switch that does
+  /// not allocate a normalized copy of the class name. Only unusual casings
+  /// fall back to `trim().toLowerCase()`.
   static VehicleType? fromClassName(String name) {
+    switch (name) {
+      case 'car':
+      case 'automobile':
+      case 'sedan':
+      case 'suv':
+        return VehicleType.car;
+      case 'bus':
+        return VehicleType.bus;
+      case 'truck':
+      case 'pickup':
+        return VehicleType.truck;
+      case 'motorcycle':
+      case 'motorbike':
+      case 'scooter':
+      case 'bike':
+        return VehicleType.motorcycle;
+    }
+
     final clean = name.trim().toLowerCase();
+    return _fromNormalized(clean);
+  }
+
+  static VehicleType? _fromNormalized(String clean) {
     switch (clean) {
       case 'car':
       case 'automobile':
