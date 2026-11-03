@@ -6,6 +6,10 @@ class CountingLinePainter extends CustomPainter {
   final bool isHorizontal;
   final Color accentColor;
 
+  static const double _dashWidth = 12.0;
+  static const double _dashGap = 8.0;
+  static const double _dashStride = _dashWidth + _dashGap;
+
   static final Paint _linePaint = Paint()
     ..strokeWidth = 2.5
     ..style = PaintingStyle.stroke;
@@ -13,6 +17,16 @@ class CountingLinePainter extends CustomPainter {
   static final Paint _glowPaint = Paint()
     ..strokeWidth = 6.0
     ..style = PaintingStyle.stroke;
+
+  static final Paint _badgeBackgroundPaint = Paint();
+  static final Paint _badgeBorderPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.0;
+
+  // The badge text only changes when the line percentage changes, so the laid
+  // out TextPainter is cached per painter instance.
+  TextPainter? _cachedBadge;
+  String? _cachedBadgeLabel;
 
   CountingLinePainter({
     required this.linePosition,
@@ -24,25 +38,22 @@ class CountingLinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     _linePaint.color = accentColor;
     _glowPaint.color = accentColor.withValues(alpha: 0.25);
+    _badgeBackgroundPaint.color = Colors.black.withValues(alpha: 0.65);
+    _badgeBorderPaint.color = accentColor.withValues(alpha: 0.4);
 
-    const dashWidth = 12.0;
-    const dashSpace = 8.0;
+    // Build every dash into one path so the glow and the line are each drawn
+    // with a single drawPath call instead of two drawLine calls per dash.
+    final path = Path();
 
     if (isHorizontal) {
       final y = size.height * linePosition;
-      double startX = 0;
-
-      // Glow pass + dashed line pass
-      while (startX < size.width) {
-        final endX = (startX + dashWidth).clamp(0.0, size.width);
-        final p1 = Offset(startX, y);
-        final p2 = Offset(endX, y);
-
-        canvas.drawLine(p1, p2, _glowPaint);
-        canvas.drawLine(p1, p2, _linePaint);
-
-        startX += dashWidth + dashSpace;
+      for (var x = 0.0; x < size.width; x += _dashStride) {
+        path.moveTo(x, y);
+        path.lineTo((x + _dashWidth).clamp(0.0, size.width), y);
       }
+
+      canvas.drawPath(path, _glowPaint);
+      canvas.drawPath(path, _linePaint);
 
       _paintBadge(
         canvas: canvas,
@@ -51,18 +62,13 @@ class CountingLinePainter extends CustomPainter {
       );
     } else {
       final x = size.width * linePosition;
-      double startY = 0;
-
-      while (startY < size.height) {
-        final endY = (startY + dashWidth).clamp(0.0, size.height);
-        final p1 = Offset(x, startY);
-        final p2 = Offset(x, endY);
-
-        canvas.drawLine(p1, p2, _glowPaint);
-        canvas.drawLine(p1, p2, _linePaint);
-
-        startY += dashWidth + dashSpace;
+      for (var y = 0.0; y < size.height; y += _dashStride) {
+        path.moveTo(x, y);
+        path.lineTo(x, (y + _dashWidth).clamp(0.0, size.height));
       }
+
+      canvas.drawPath(path, _glowPaint);
+      canvas.drawPath(path, _linePaint);
 
       _paintBadge(
         canvas: canvas,
@@ -80,21 +86,7 @@ class CountingLinePainter extends CustomPainter {
     required Offset position,
     required String label,
   }) {
-    final textSpan = TextSpan(
-      text: label,
-      style: TextStyle(
-        color: accentColor,
-        fontSize: 10,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1.1,
-      ),
-    );
-
-    final textPainter = TextPainter(
-      text: textSpan,
-      textDirection: TextDirection.ltr,
-    )..layout();
-
+    final textPainter = _badgePainter(label);
     final bgRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(
         position.dx - 6,
@@ -105,16 +97,32 @@ class CountingLinePainter extends CustomPainter {
       const Radius.circular(6),
     );
 
-    final bgPaint = Paint()..color = Colors.black.withValues(alpha: 0.65);
-    canvas.drawRRect(bgRect, bgPaint);
-
-    final borderPaint = Paint()
-      ..color = accentColor.withValues(alpha: 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    canvas.drawRRect(bgRect, borderPaint);
+    canvas.drawRRect(bgRect, _badgeBackgroundPaint);
+    canvas.drawRRect(bgRect, _badgeBorderPaint);
 
     textPainter.paint(canvas, position);
+  }
+
+  TextPainter _badgePainter(String label) {
+    final cached = _cachedBadge;
+    if (cached != null && _cachedBadgeLabel == label) return cached;
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: accentColor,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    _cachedBadge = painter;
+    _cachedBadgeLabel = label;
+    return painter;
   }
 
   @override
@@ -124,4 +132,3 @@ class CountingLinePainter extends CustomPainter {
         oldDelegate.accentColor != accentColor;
   }
 }
-
