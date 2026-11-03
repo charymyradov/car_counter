@@ -101,6 +101,18 @@ class VehicleTracker {
 
   final ValueNotifier<int> activeVehiclesNotifier = ValueNotifier<int>(0);
 
+  /// Measured processing frame rate, refreshed at most twice per second.
+  final ValueNotifier<int> fpsNotifier = ValueNotifier<int>(0);
+
+  /// When false, incoming frames are ignored (app in background).
+  bool _processingEnabled = true;
+
+  final Stopwatch _frameClock = Stopwatch();
+  int _framesSinceFpsSample = 0;
+  int _lastFpsSampleMicros = 0;
+
+  static const int _fpsSampleIntervalMicros = 500000;
+
   int _nextTrackId = 0;
   final List<VehicleTrack> _activeTracks = [];
 
@@ -138,8 +150,27 @@ class VehicleTracker {
 
   List<VehicleTrack> get activeTracks => List.unmodifiable(_activeTracks);
 
+  /// Enables or disables frame processing, e.g. while the app is backgrounded.
+  void setProcessingEnabled(bool enabled) {
+    if (_processingEnabled == enabled) return;
+    _processingEnabled = enabled;
+
+    if (enabled) {
+      _frameClock.reset();
+      _frameClock.start();
+      _framesSinceFpsSample = 0;
+      _lastFpsSampleMicros = 0;
+    } else {
+      _frameClock.stop();
+      fpsNotifier.value = 0;
+    }
+  }
+
   /// Process incoming detections from YOLO frame callback.
   void processFrame(List<YOLOResult> results) {
+    if (!_processingEnabled) return;
+
+    _sampleFps();
     _frameStamp++;
 
     final hasDetections = _collectDetections(results);
@@ -245,9 +276,29 @@ class VehicleTracker {
     }
   }
 
+  /// Samples the detection callback rate without allocating timers.
+  void _sampleFps() {
+    if (!_frameClock.isRunning) {
+      _frameClock.start();
+      _lastFpsSampleMicros = 0;
+      _framesSinceFpsSample = 0;
+      return;
+    }
+
+    _framesSinceFpsSample++;
+    final elapsed = _frameClock.elapsedMicroseconds - _lastFpsSampleMicros;
+    if (elapsed < _fpsSampleIntervalMicros) return;
+
+    final fps = (_framesSinceFpsSample * 1000000 / elapsed).round();
+    _framesSinceFpsSample = 0;
+    _lastFpsSampleMicros = _frameClock.elapsedMicroseconds;
+    if (fpsNotifier.value != fps) {
+      fpsNotifier.value = fps;
+    }
+  }
+
   /// Filters YOLO results into the reusable detection buffers.
-  bool _collectDetections(List<YOLOResult> results) {
-    _detectionTypes.clear();
+  bool _collectDetections(List<YOLOResult> results) {    _detectionTypes.clear();
     _detectionX.clear();
     _detectionY.clear();
     _detectionConfidence.clear();
@@ -304,5 +355,6 @@ class VehicleTracker {
     configNotifier.dispose();
     statsNotifier.dispose();
     activeVehiclesNotifier.dispose();
+    fpsNotifier.dispose();
   }
 }

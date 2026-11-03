@@ -63,6 +63,9 @@ class _CarCounterPageState extends State<CarCounterPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Skip detection post-processing while the app is not visible.
+    _tracker.setProcessingEnabled(state == AppLifecycleState.resumed);
+
     if (state == AppLifecycleState.resumed && !_cameraGranted) {
       _checkPermissionStatus();
     }
@@ -214,9 +217,12 @@ class _CarCounterPageState extends State<CarCounterPage>
           top: MediaQuery.paddingOf(context).top + 10,
           left: 16,
           right: 16,
-          child: HudHeader(
-            statsNotifier: _tracker.statsNotifier,
-            activeVehiclesNotifier: _tracker.activeVehiclesNotifier,
+          child: RepaintBoundary(
+            child: HudHeader(
+              statsNotifier: _tracker.statsNotifier,
+              activeVehiclesNotifier: _tracker.activeVehiclesNotifier,
+              fpsNotifier: _tracker.fpsNotifier,
+            ),
           ),
         ),
 
@@ -225,9 +231,11 @@ class _CarCounterPageState extends State<CarCounterPage>
           bottom: MediaQuery.paddingOf(context).bottom + 16,
           left: 16,
           right: 16,
-          child: HudBottomControls(
-            onReset: _tracker.reset,
-            onToggleSettings: _openSettings,
+          child: RepaintBoundary(
+            child: HudBottomControls(
+              onReset: _tracker.reset,
+              onToggleSettings: _openSettings,
+            ),
           ),
         ),
       ],

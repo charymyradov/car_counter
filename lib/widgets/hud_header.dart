@@ -6,11 +6,13 @@ import '../models/vehicle_type.dart';
 class HudHeader extends StatelessWidget {
   final ValueNotifier<CounterStats> statsNotifier;
   final ValueNotifier<int> activeVehiclesNotifier;
+  final ValueNotifier<int> fpsNotifier;
 
   const HudHeader({
     super.key,
     required this.statsNotifier,
     required this.activeVehiclesNotifier,
+    required this.fpsNotifier,
   });
 
   @override
@@ -49,16 +51,23 @@ class HudHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          const Text(
-            'CAR COUNTER AI',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.5,
-              color: Colors.white,
+          const Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'CAR COUNTER AI',
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           // Active vehicles badge
           ValueListenableBuilder<int>(
             valueListenable: activeVehiclesNotifier,
@@ -92,37 +101,44 @@ class HudHeader extends StatelessWidget {
             },
           ),
           const SizedBox(width: 8),
-          // Live pulse
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00E676).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.4)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF00E676),
-                    shape: BoxShape.circle,
+          // Live pulse + measured processing rate
+          ValueListenableBuilder<int>(
+            valueListenable: fpsNotifier,
+            builder: (context, fps, _) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFF00E676).withValues(alpha: 0.4),
                   ),
                 ),
-                const SizedBox(width: 5),
-                const Text(
-                  'LIVE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF00E676),
-                    letterSpacing: 1,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF00E676),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      fps > 0 ? '$fps FPS' : 'LIVE',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF00E676),
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),
