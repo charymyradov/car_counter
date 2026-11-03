@@ -7,21 +7,57 @@ High-performance real-time AI vehicle counter built with Flutter and Ultralytics
 ## ⚡ Performance & Refactoring Optimizations
 
 1. **Zero-Inference Rebuilds (Garbage Collection & Frame Drop Prevention)**:
-   - Previously, every incoming detection frame called `setState()`, causing the entire widget tree (including camera and painter) to rebuild 30–60 times per second.
-   - Refactored to reactive `ValueNotifier<CounterStats>` and `ValueNotifier<int>`. Detections are processed in memory and UI elements update isolatedly without dropping camera frames.
-2. **Optimized Spatial Tracking Engine**:
-   - Replaced naive Euclidean distance checks with **squared Euclidean distance** ($dx^2 + dy^2$) avoiding expensive `sqrt()` operations during multi-object matching.
-   - Added **motion vector extrapolation / velocity prediction** to maintain track stability for faster-moving vehicles.
-3. **Multi-Vehicle Support**:
-   - Integrated `VehicleType` (Cars, Buses, Trucks, Motorcycles) using YOLO COCO classification.
-   - Live breakdown metrics with individual counters and type-specific visual identifiers.
-4. **Directional Flow Analysis**:
-   - Tracks whether vehicles are crossing inbound (left-to-right / top-to-bottom) or outbound.
-5. **Configurable Counting Barrier**:
-   - Switch between **Vertical** and **Horizontal** counting lines.
-   - Adjust line position (10% to 90%) and minimum confidence threshold directly from the live settings modal.
-6. **Zero-Allocation Custom Painter**:
-   - Reused cached `Paint` instances in `CountingLinePainter` to eliminate micro-allocations in render passes.
+   - Detections are processed in memory and published through narrow
+     `ValueNotifier`s, so the camera layer never rebuilds during inference.
+   - The HUD, controls and counting-line overlay are wrapped in
+     `RepaintBoundary`s, isolating their repaints from the camera texture.
+2. **Allocation-Free Tracking Loop**:
+   - Detection buffers are reused between frames instead of allocating a list of
+     records, a matched-id `Set` and a `removeWhere` closure on every frame.
+   - A monotonic frame stamp on each track replaces hash-based match bookkeeping,
+     and lost tracks are compacted in place.
+   - Track history uses a fixed-size `Float32List` ring buffer, so trajectory
+     updates are O(1) and never shift the list.
+   - `CounterStats` stores per-type counts in a fixed four-element list with value
+     equality, avoiding a map rebuild for every counted vehicle.
+   - `VehicleType.fromClassName` resolves lowercase YOLO labels with a direct
+     switch, skipping `trim()`/`toLowerCase()` allocations per detection.
+3. **Live Configuration Without Page Rebuilds**:
+   - `VehicleTracker` exposes a `ValueNotifier<CounterConfig>`; adjusting the
+     counting line or confidence slider updates only the overlay/settings sheet,
+     not the full page.
+4. **Optimized Spatial Tracking Engine**:
+   - Uses **squared Euclidean distance** ($dx^2 + dy^2$), avoiding `sqrt()` during
+     multi-object matching.
+   - Adds **motion vector extrapolation** to keep fast-moving vehicles associated.
+   - Requires `minHits` confirmations before accepting a crossing and caps
+     simultaneous tracks with `maxTracks`, filtering detector noise.
+5. **Batched Overlay Painting**:
+   - All dashes of the counting barrier are accumulated into a single `Path`
+     (two `drawPath` calls instead of two `drawLine` calls per dash), and the
+     badge `TextPainter` layout is cached.
+6. **Live Performance Telemetry**:
+   - A `Stopwatch`-based `fpsNotifier` reports the measured detection callback
+     rate in the HUD, sampled twice per second without timers.
+   - Frame processing pauses automatically while the app is backgrounded.
+7. **Multi-Vehicle Support & Directional Flow**:
+   - Cars, buses, trucks and motorcycles are classified from YOLO COCO labels,
+     with per-type counters and inbound/outbound direction tracking.
+8. **Configurable Counting Barrier**:
+   - Switch between **vertical** and **horizontal** counting lines and adjust line
+     position (10%–90%) or the minimum confidence threshold from the settings sheet.
+
+---
+
+## 🧪 Tests
+
+```bash
+flutter test
+```
+
+Covers class mapping, immutable stats, ring-buffer history, config notifications,
+inbound/outbound crossings, `minHits` gating, track pruning, `maxTracks` and
+background pausing.
 
 ---
 
@@ -32,7 +68,7 @@ lib/
 ├── main.dart                      # App entry point, lifecycle & camera setup
 ├── models/
 │   ├── counter_stats.dart         # Immutable statistics & vehicle metrics
-│   ├── vehicle_track.dart         # Active track state, velocity vector & trajectory
+│   ├── vehicle_track.dart         # Active track state, velocity & ring buffer
 │   └── vehicle_type.dart          # Enum mapping COCO labels, icons & colors
 ├── services/
 │   └── vehicle_tracker.dart       # Core tracking & line-crossing logic
